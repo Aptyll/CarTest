@@ -2,23 +2,22 @@
 
 A tiny vanilla JavaScript three.js prototype with PeerJS multiplayer, host-owned physics, score, boost, jump, and arena power-ups.
 
-## Run Locally
+## Run Locally Or On GitHub Pages
 
 1. Open this folder in Cursor or VS Code.
-2. Start the page with Live Server.
-3. The host clicks **Host Game** and shares:
-   - The Live Server URL, for example `http://192.168.1.20:5500`
-   - The generated peer room ID
-4. The guest opens the same URL, pastes the room ID, and clicks **Join Game**.
+2. Start the page with Live Server, or open the GitHub Pages link.
+3. The host clicks **Host Game** and shares the lobby code, for example `CAR-1234`.
+4. The guest opens the same game page, pastes the lobby code, and clicks **Join Lobby**.
 
-PeerJS handles the WebRTC connection between browsers. This prototype uses the public PeerJS signaling broker from the CDN script, while the game page itself is locally hosted from your computer.
+PeerJS handles the WebRTC connection between browsers. The page URL only gets both players to the same game page; the lobby code connects the guest to the host.
 
 ## Controls
 
 - `W` / `S`: Drive forward / reverse
 - `A` / `D`: Steer
-- `Space`: Jump
-- `Shift`: Boost
+- `Space`: Jump, then press again quickly in the air to flip
+- `W`, `A`, `S`, or `D` + second `Space`: Directional air flip
+- `Shift`: Faster boost with orange/blue boost trails
 
 ## Arena And Power-Ups
 

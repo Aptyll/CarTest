@@ -71,6 +71,11 @@ const input = {
   boost: false,
 };
 
+const trailState = {
+  dirtCursor: 0,
+  boostCursor: 0,
+};
+
 const gameState = createInitialState();
 const objects = createWorld();
 
@@ -97,13 +102,14 @@ window.addEventListener("keyup", (event) => {
 
 function startHost() {
   role = "host";
-  peer = new Peer();
-  showGame("Creating host room...");
+  const lobbyCode = createLobbyCode();
+  peer = new Peer(lobbyCode);
+  showGame("Creating lobby code...", true);
 
   peer.on("open", (id) => {
     roomCard.classList.remove("hidden");
     roomIdEl.textContent = id;
-    setStatus("Waiting for guest. Share your Live Server URL and this room ID.");
+    setStatus(`Waiting for guest. Share lobby code ${id}.`);
   });
 
   peer.on("connection", (conn) => {
@@ -112,25 +118,32 @@ function startHost() {
       return;
     }
     attachConnection(conn);
+    menu.classList.add("hidden");
     setStatus("Guest connected. You are blue.");
   });
 
-  peer.on("error", (error) => setStatus(`Peer error: ${error.message}`));
+  peer.on("error", (error) => {
+    if (error.type === "unavailable-id") {
+      setStatus("That lobby code was taken. Refresh and host again for a new code.");
+      return;
+    }
+    setStatus(`Peer error: ${error.message}`);
+  });
 }
 
 function joinGame() {
-  const hostId = roomInput.value.trim();
-  if (!hostId) {
-    setStatus("Enter the host peer ID first.");
+  const lobbyCode = roomInput.value.trim().toUpperCase();
+  if (!lobbyCode) {
+    setStatus("Enter the host's lobby code first.");
     return;
   }
 
   role = "guest";
   peer = new Peer();
-  showGame("Connecting to host...");
+  showGame(`Joining lobby ${lobbyCode}...`);
 
   peer.on("open", () => {
-    attachConnection(peer.connect(hostId, { reliable: true }));
+    attachConnection(peer.connect(lobbyCode, { reliable: true }));
   });
 
   peer.on("error", (error) => setStatus(`Peer error: ${error.message}`));
@@ -166,14 +179,18 @@ function attachConnection(conn) {
   conn.on("error", (error) => setStatus(`Connection error: ${error.message}`));
 }
 
-function showGame(message) {
-  menu.classList.add("hidden");
+function showGame(message, keepMenu = false) {
+  menu.classList.toggle("hidden", !keepMenu);
   hud.classList.remove("hidden");
   setStatus(message);
 }
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function createLobbyCode() {
+  return `CAR-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 function loop() {
@@ -254,9 +271,17 @@ function createPlayer(id, x, z, yaw) {
     velocity: { x: 0, y: 0, z: 0 },
     yaw,
     boost: 100,
-    jumps: 1,
+    jumps: 2,
     grounded: true,
     radius: 1.2,
+    jumpWasDown: false,
+    airTime: 0,
+    flipTimer: 0,
+    flipDuration: 0,
+    flipPitch: 0,
+    flipRoll: 0,
+    steerAmount: 0,
+    boosting: false,
     input: { ...input },
   };
 }
@@ -299,30 +324,39 @@ function updateAttractMode(state, dt) {
 function updatePlayer(player, dt) {
   const controls = player.input || input;
   const forward = { x: Math.sin(player.yaw), z: Math.cos(player.yaw) };
+  const right = { x: Math.cos(player.yaw), z: -Math.sin(player.yaw) };
   const speed = Math.hypot(player.velocity.x, player.velocity.z);
   const steerPower = THREE.MathUtils.clamp(speed / 14, 0.52, 1.18);
   const steer = (controls.left ? 1 : 0) - (controls.right ? 1 : 0);
+  const jumpPressed = controls.jump && !player.jumpWasDown;
 
   player.yaw += steer * steerPower * 4.15 * dt;
+  player.steerAmount = steer;
 
   const throttle = (controls.throttle ? 1 : 0) - (controls.brake ? 0.72 : 0);
   const boostActive = controls.boost && player.boost > 0 && controls.throttle;
-  const accel = boostActive ? 37 : 23;
+  const accel = boostActive ? 52 : 31;
   player.velocity.x += forward.x * throttle * accel * dt;
   player.velocity.z += forward.z * throttle * accel * dt;
+  player.boosting = boostActive;
 
   if (boostActive) {
-    player.boost = Math.max(0, player.boost - 36 * dt);
+    player.boost = Math.max(0, player.boost - 46 * dt);
   } else {
-    player.boost = Math.min(100, player.boost + 7 * dt);
+    player.boost = Math.min(100, player.boost + 8 * dt);
   }
 
-  if (controls.jump && player.grounded && player.jumps > 0) {
-    player.velocity.y = 9.2;
+  if (jumpPressed && player.grounded && player.jumps > 0) {
+    player.velocity.y = 10.4;
     player.grounded = false;
     player.jumps -= 1;
+    player.airTime = 0;
+  } else if (jumpPressed && !player.grounded && player.jumps > 0 && player.airTime < 0.95) {
+    triggerAirFlip(player, controls, forward, right);
   }
 
+  player.airTime = player.grounded ? 0 : player.airTime + dt;
+  player.flipTimer = Math.max(0, player.flipTimer - dt);
   player.velocity.y -= 25 * dt;
   player.position.x += player.velocity.x * dt;
   player.position.y += player.velocity.y * dt;
@@ -333,16 +367,37 @@ function updatePlayer(player, dt) {
     player.position.y = groundY;
     player.velocity.y = Math.max(0, player.velocity.y);
     player.grounded = true;
-    player.jumps = Math.max(player.jumps, 1);
+    player.jumps = 2;
+    player.airTime = 0;
+    player.flipTimer = 0;
   }
 
   const drag = player.grounded ? 0.985 : 0.997;
   player.velocity.x *= drag;
   player.velocity.z *= drag;
 
-  const maxSpeed = boostActive ? 31 : 22;
+  const maxSpeed = boostActive ? 43 : 31;
   clampHorizontalSpeed(player.velocity, maxSpeed);
   clampToField(player.position, player.velocity, player.radius);
+  player.jumpWasDown = controls.jump;
+}
+
+function triggerAirFlip(player, controls, forward, right) {
+  const forwardInput = (controls.throttle ? 1 : 0) - (controls.brake ? 1 : 0);
+  const sideInput = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
+  const hasDirection = Math.abs(forwardInput) + Math.abs(sideInput) > 0;
+  const flipForward = hasDirection ? forwardInput : 1;
+  const flipSide = hasDirection ? sideInput : 0;
+  const impulseScale = hasDirection ? 15.5 : 11.5;
+
+  player.velocity.x += (forward.x * flipForward + right.x * flipSide) * impulseScale;
+  player.velocity.z += (forward.z * flipForward + right.z * flipSide) * impulseScale;
+  player.velocity.y = Math.max(player.velocity.y, 6.8);
+  player.jumps -= 1;
+  player.flipDuration = 0.46;
+  player.flipTimer = player.flipDuration;
+  player.flipPitch = flipForward || 0;
+  player.flipRoll = flipSide || 0;
 }
 
 function updateBall(ball, dt) {
@@ -370,7 +425,7 @@ function updateBall(ball, dt) {
     ball.velocity.z *= -0.82;
   }
 
-  clampHorizontalSpeed(ball.velocity, 34);
+  clampHorizontalSpeed(ball.velocity, 42);
 }
 
 function resolvePlayerBall(player, ball, force) {
@@ -388,8 +443,8 @@ function resolvePlayerBall(player, ball, force) {
   ball.position.z += nz * overlap;
 
   const playerSpeed = Math.hypot(player.velocity.x, player.velocity.z);
-  ball.velocity.x += nx * (9 + playerSpeed * 0.55) * force + player.velocity.x * 0.38;
-  ball.velocity.z += nz * (9 + playerSpeed * 0.55) * force + player.velocity.z * 0.38;
+  ball.velocity.x += nx * (10.5 + playerSpeed * 0.62) * force + player.velocity.x * 0.42;
+  ball.velocity.z += nz * (10.5 + playerSpeed * 0.62) * force + player.velocity.z * 0.42;
   ball.velocity.y = Math.max(ball.velocity.y, Math.abs(player.velocity.y) * 0.2 + 2.2);
 }
 
@@ -469,6 +524,12 @@ function resetKickoff(state) {
   state.players.guest.velocity = { x: 0, y: 0, z: 0 };
   state.players.host.yaw = Math.PI;
   state.players.guest.yaw = 0;
+  state.players.host.jumps = 2;
+  state.players.guest.jumps = 2;
+  state.players.host.jumpWasDown = false;
+  state.players.guest.jumpWasDown = false;
+  state.players.host.flipTimer = 0;
+  state.players.guest.flipTimer = 0;
   state.ball.position = { x: 0, y: 1.15, z: 0 };
   state.ball.velocity = { x: (Math.random() - 0.5) * 4, y: 0, z: (Math.random() - 0.5) * 4 };
 }
@@ -536,6 +597,7 @@ function createWorld() {
     group.add(mesh);
     return mesh;
   });
+  const trails = createTrailMeshes(group);
 
   return {
     group,
@@ -543,7 +605,39 @@ function createWorld() {
     ball,
     powerups,
     goalNets,
+    trails,
   };
+}
+
+function createTrailMeshes(group) {
+  const dirtMaterial = new THREE.MeshBasicMaterial({
+    color: 0x6a4a2b,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const boostMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffb13b,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const trails = {
+    dirt: createTrailPool(group, 72, new THREE.BoxGeometry(0.34, 0.035, 0.78), dirtMaterial),
+    boost: createTrailPool(group, 56, new THREE.ConeGeometry(0.22, 1.25, 6), boostMaterial),
+  };
+  return trails;
+}
+
+function createTrailPool(group, count, geometry, material) {
+  const pool = [];
+  for (let i = 0; i < count; i += 1) {
+    const mesh = new THREE.Mesh(geometry, material.clone());
+    mesh.visible = false;
+    group.add(mesh);
+    pool.push({ mesh, life: 0, maxLife: 1 });
+  }
+  return pool;
 }
 
 function addTurfStripes(group) {
@@ -829,19 +923,76 @@ function createCar(color) {
 
 function createBall() {
   const ball = new THREE.Group();
-  const shell = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(1.15, 2),
-    new THREE.MeshStandardMaterial({ color: COLORS.ball, roughness: 0.32, metalness: 0.08 }),
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1.04, 2),
+    new THREE.MeshStandardMaterial({
+      color: 0xe8f7ff,
+      roughness: 0.26,
+      metalness: 0.2,
+      flatShading: true,
+    }),
   );
-  const seamMaterial = new THREE.MeshStandardMaterial({ color: 0x1d3852, roughness: 0.48 });
-  const ringA = new THREE.Mesh(new THREE.TorusGeometry(1.18, 0.035, 6, 36), seamMaterial);
-  const ringB = ringA.clone();
-  const ringC = ringA.clone();
-  shell.castShadow = true;
-  ringB.rotation.x = Math.PI / 2;
-  ringC.rotation.y = Math.PI / 2;
-  ball.add(shell, ringA, ringB, ringC);
+  core.castShadow = true;
+  ball.add(core);
+
+  const hexMaterial = new THREE.MeshStandardMaterial({
+    color: 0xf8fdff,
+    roughness: 0.18,
+    metalness: 0.18,
+    flatShading: true,
+  });
+  const triangleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x60dcff,
+    emissive: 0x0b8ab8,
+    emissiveIntensity: 0.32,
+    roughness: 0.15,
+    metalness: 0.78,
+    flatShading: true,
+  });
+  const seamMaterial = new THREE.MeshStandardMaterial({
+    color: 0x12314a,
+    roughness: 0.5,
+    metalness: 0.2,
+    flatShading: true,
+  });
+
+  createSpherePanels(34).forEach((normal, index) => {
+    const panel = new THREE.Mesh(new THREE.CircleGeometry(index % 5 === 0 ? 0.34 : 0.3, 6), hexMaterial);
+    orientPanelOnBall(panel, normal, 1.115, index * 0.37);
+    ball.add(panel);
+  });
+
+  createSpherePanels(18, 0.55).forEach((normal, index) => {
+    const triangle = new THREE.Mesh(new THREE.CircleGeometry(0.24, 3), triangleMaterial);
+    orientPanelOnBall(triangle, normal, 1.135, index * 0.71);
+    ball.add(triangle);
+  });
+
+  createSpherePanels(24, 0.22).forEach((normal, index) => {
+    const rivet = new THREE.Mesh(new THREE.CircleGeometry(0.075, 6), seamMaterial);
+    orientPanelOnBall(rivet, normal, 1.145, index * 0.21);
+    ball.add(rivet);
+  });
+
   return ball;
+}
+
+function createSpherePanels(count, offset = 0) {
+  const points = [];
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i += 1) {
+    const y = 1 - (i / (count - 1)) * 2;
+    const radius = Math.sqrt(1 - y * y);
+    const theta = i * goldenAngle + offset;
+    points.push(new THREE.Vector3(Math.cos(theta) * radius, y, Math.sin(theta) * radius).normalize());
+  }
+  return points;
+}
+
+function orientPanelOnBall(mesh, normal, radius, spin) {
+  mesh.position.copy(normal).multiplyScalar(radius);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+  mesh.rotateZ(spin);
 }
 
 function createPowerupMesh(type) {
@@ -873,7 +1024,13 @@ function updateMeshes(state) {
     const player = state.players[id];
     const mesh = objects.players[id];
     mesh.position.set(player.position.x, player.position.y, player.position.z);
-    mesh.rotation.set(0, player.yaw, player.velocity.y * -0.015);
+    const flipProgress =
+      player.flipDuration > 0 ? 1 - THREE.MathUtils.clamp(player.flipTimer / player.flipDuration, 0, 1) : 1;
+    const flipSpin = player.flipTimer > 0 ? flipProgress * Math.PI * 2 : 0;
+    const pitch = player.flipPitch * flipSpin;
+    const roll = player.flipRoll * flipSpin + player.velocity.y * -0.015;
+    mesh.rotation.set(pitch, player.yaw, roll);
+    spawnCarTrails(player, id);
   });
 
   objects.ball.position.set(state.ball.position.x, state.ball.position.y, state.ball.position.z);
@@ -893,6 +1050,73 @@ function updateMeshes(state) {
     net.material.opacity = 0.62 + pulse * 0.24;
     net.glow.material.opacity = 0.06 + pulse * 0.08;
   });
+
+  updateTrailPool(objects.trails.dirt, 0.024, 1.012);
+  updateTrailPool(objects.trails.boost, 0.034, 1.018);
+}
+
+function spawnCarTrails(player, id) {
+  const speed = Math.hypot(player.velocity.x, player.velocity.z);
+  const carBack = new THREE.Vector3(-Math.sin(player.yaw) * 1.65, 0, -Math.cos(player.yaw) * 1.65);
+  const carRight = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const base = new THREE.Vector3(player.position.x, 0.08, player.position.z).add(carBack);
+
+  if (player.grounded && Math.abs(player.steerAmount) > 0.1 && speed > 7) {
+    [-1, 1].forEach((side) => {
+      const offset = carRight.clone().multiplyScalar(side * 0.78);
+      spawnTrailParticle(
+        objects.trails.dirt,
+        trailState.dirtCursor,
+        base.clone().add(offset),
+        player.yaw + (Math.random() - 0.5) * 0.45,
+        0.62,
+        0.55 + Math.random() * 0.2,
+      );
+      trailState.dirtCursor = (trailState.dirtCursor + 1) % objects.trails.dirt.length;
+    });
+  }
+
+  if (player.boosting) {
+    const boostColor = id === "host" ? 0x59d8ff : 0xffa04b;
+    [-0.32, 0.32].forEach((side) => {
+      const offset = carRight.clone().multiplyScalar(side);
+      const point = base.clone().add(offset);
+      spawnTrailParticle(
+        objects.trails.boost,
+        trailState.boostCursor,
+        point,
+        player.yaw + Math.PI,
+        0.38,
+        0.62 + Math.random() * 0.18,
+        boostColor,
+      );
+      trailState.boostCursor = (trailState.boostCursor + 1) % objects.trails.boost.length;
+    });
+  }
+}
+
+function spawnTrailParticle(pool, index, position, yaw, maxLife, scale, color) {
+  const particle = pool[index];
+  particle.life = maxLife;
+  particle.maxLife = maxLife;
+  particle.mesh.visible = true;
+  particle.mesh.position.copy(position);
+  particle.mesh.rotation.set(Math.PI / 2, 0, -yaw);
+  particle.mesh.scale.setScalar(scale);
+  particle.mesh.material.opacity = 0.68;
+  if (color) particle.mesh.material.color.setHex(color);
+}
+
+function updateTrailPool(pool, fadeSpeed, growSpeed) {
+  pool.forEach((particle) => {
+    if (particle.life <= 0) return;
+
+    particle.life -= fadeSpeed;
+    const alpha = Math.max(0, particle.life / particle.maxLife);
+    particle.mesh.material.opacity = alpha * 0.58;
+    particle.mesh.scale.multiplyScalar(growSpeed);
+    if (particle.life <= 0) particle.mesh.visible = false;
+  });
 }
 
 function updateCamera(localId, dt) {
@@ -911,7 +1135,7 @@ function updateHud(localId) {
   boostBar.style.width = `${Math.round(player.boost)}%`;
 
   if (role === "host" && !connected && roomIdEl.textContent !== "...") {
-    setStatus("Waiting for guest. Share your Live Server URL and room ID.");
+    setStatus(`Waiting for guest. Share lobby code ${roomIdEl.textContent}.`);
   }
 }
 
@@ -927,6 +1151,14 @@ function copyNetworkState(target, source) {
     target.players[id].boost = source.players[id].boost;
     target.players[id].jumps = source.players[id].jumps;
     target.players[id].grounded = source.players[id].grounded;
+    target.players[id].jumpWasDown = source.players[id].jumpWasDown;
+    target.players[id].airTime = source.players[id].airTime;
+    target.players[id].flipTimer = source.players[id].flipTimer;
+    target.players[id].flipDuration = source.players[id].flipDuration;
+    target.players[id].flipPitch = source.players[id].flipPitch;
+    target.players[id].flipRoll = source.players[id].flipRoll;
+    target.players[id].steerAmount = source.players[id].steerAmount;
+    target.players[id].boosting = source.players[id].boosting;
   });
 
   Object.assign(target.ball.position, source.ball.position);

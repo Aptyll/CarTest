@@ -9,23 +9,23 @@
   <body>
     <main id="app">
       <section id="menu" class="panel">
-        <p class="eyebrow">Peer.js local-hosted prototype</p>
+        <p class="eyebrow">Peer.js lobby prototype</p>
         <h1>Lowpoly Rocket League 1v1</h1>
         <p>
-          Host with Live Server, share the page URL and your peer room ID with a
-          friend on the same network, then play peer-to-peer.
+          Send your friend this game page link. When you host, you will get a
+          short lobby code they can paste here to join.
         </p>
 
         <div class="actions">
           <button id="hostButton">Host Game</button>
           <div class="join-row">
-            <input id="roomInput" placeholder="Host peer ID" autocomplete="off" />
-            <button id="joinButton">Join Game</button>
+            <input id="roomInput" placeholder="Lobby code, e.g. CAR-1234" autocomplete="off" />
+            <button id="joinButton">Join Lobby</button>
           </div>
         </div>
 
         <div id="roomCard" class="room-card hidden">
-          <span>Your room ID</span>
+          <span>Your lobby code</span>
           <strong id="roomId">...</strong>
         </div>
 
