@@ -1,12 +1,16 @@
 import * as THREE from "https://unpkg.com/three@0.165.0/build/three.module.js";
 
 const FIELD = {
-  width: 46,
-  depth: 76,
+  width: 92,
+  depth: 152,
   wall: 3.1,
   goalWidth: 17,
   goalDepth: 5.2,
 };
+
+const PLAYER_START_Z = 50;
+const JUMP_VELOCITY = 20.8;
+const WHEEL_RADIUS = 0.46;
 
 const PLAYER_IDS = ["host", "guest"];
 const COLORS = {
@@ -29,6 +33,18 @@ const KEYS = {
   ShiftRight: "boost",
 };
 
+const PEER_OPTIONS = {
+  debug: 2,
+  config: {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:global.stun.twilio.com:3478" },
+    ],
+  },
+};
+
 const menu = document.querySelector("#menu");
 const hud = document.querySelector("#hud");
 const statusEl = document.querySelector("#status");
@@ -48,9 +64,9 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07111f);
-scene.fog = new THREE.Fog(0x07111f, 62, 142);
+scene.fog = new THREE.Fog(0x07111f, 110, 260);
 
-const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 220);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 320);
 const clock = new THREE.Clock();
 const stateClock = new THREE.Clock();
 
@@ -61,6 +77,7 @@ let connected = false;
 let latestRemoteState = null;
 let lastNetworkSend = 0;
 let resetMessageTime = 0;
+let joinTimeout = null;
 
 const input = {
   throttle: false,
@@ -74,6 +91,7 @@ const input = {
 const trailState = {
   dirtCursor: 0,
   boostCursor: 0,
+  airCursor: 0,
 };
 
 const gameState = createInitialState();
@@ -103,8 +121,8 @@ window.addEventListener("keyup", (event) => {
 function startHost() {
   role = "host";
   const lobbyCode = createLobbyCode();
-  peer = new Peer(lobbyCode);
-  showGame("Creating lobby code...", true);
+  peer = createPeer(lobbyCode);
+  showGame("Creating lobby code...");
 
   peer.on("open", (id) => {
     roomCard.classList.remove("hidden");
@@ -118,8 +136,7 @@ function startHost() {
       return;
     }
     attachConnection(conn);
-    menu.classList.add("hidden");
-    setStatus("Guest connected. You are blue.");
+    setStatus("Guest found. Opening WebRTC data channel...");
   });
 
   peer.on("error", (error) => {
@@ -129,6 +146,8 @@ function startHost() {
     }
     setStatus(`Peer error: ${error.message}`);
   });
+
+  peer.on("disconnected", () => setStatus("Disconnected from PeerJS. Refresh to host again."));
 }
 
 function joinGame() {
@@ -139,21 +158,35 @@ function joinGame() {
   }
 
   role = "guest";
-  peer = new Peer();
+  peer = createPeer();
   showGame(`Joining lobby ${lobbyCode}...`);
 
   peer.on("open", () => {
-    attachConnection(peer.connect(lobbyCode, { reliable: true }));
+    const conn = peer.connect(lobbyCode, { reliable: true });
+    attachConnection(conn);
+    joinTimeout = window.setTimeout(() => {
+      if (!connected) {
+        setStatus(
+          "Still trying to connect. Check the lobby code, keep the host tab open, or try a different network.",
+        );
+      }
+    }, 12000);
   });
 
   peer.on("error", (error) => setStatus(`Peer error: ${error.message}`));
+  peer.on("disconnected", () => setStatus("Disconnected from PeerJS. Refresh and join again."));
 }
 
 function attachConnection(conn) {
   connection = conn;
 
   conn.on("open", () => {
+    if (joinTimeout) {
+      window.clearTimeout(joinTimeout);
+      joinTimeout = null;
+    }
     connected = true;
+    menu.classList.add("hidden");
     setStatus(role === "host" ? "Guest connected. You are blue." : "Connected. You are orange.");
     conn.send({ type: "hello", role });
   });
@@ -172,6 +205,10 @@ function attachConnection(conn) {
   });
 
   conn.on("close", () => {
+    if (joinTimeout) {
+      window.clearTimeout(joinTimeout);
+      joinTimeout = null;
+    }
     connected = false;
     setStatus("Peer disconnected. Refresh to start a new room.");
   });
@@ -193,6 +230,10 @@ function createLobbyCode() {
   return `CAR-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
+function createPeer(id) {
+  return id ? new Peer(id, PEER_OPTIONS) : new Peer(PEER_OPTIONS);
+}
+
 function loop() {
   const frameDt = Math.min(clock.getDelta(), 0.033);
   const localId = role || "host";
@@ -211,7 +252,7 @@ function loop() {
     updateAttractMode(gameState, frameDt);
   }
 
-  updateMeshes(gameState);
+  updateMeshes(gameState, frameDt);
   updateCamera(localId, frameDt);
   updateHud(localId);
   renderer.render(scene, camera);
@@ -238,28 +279,28 @@ function sendState() {
 function createInitialState() {
   return {
     players: {
-      host: createPlayer("host", 0, 25, Math.PI),
-      guest: createPlayer("guest", 0, -25, 0),
+      host: createPlayer("host", 0, PLAYER_START_Z, Math.PI),
+      guest: createPlayer("guest", 0, -PLAYER_START_Z, 0),
     },
     ball: {
-      position: { x: 0, y: 1.15, z: 0 },
+      position: { x: 0, y: 1.3, z: 0 },
       velocity: { x: 0, y: 0, z: 0 },
-      radius: 1.15,
+      radius: 1.3,
     },
     score: { host: 0, guest: 0 },
     powerups: [
-      createPowerup("boost", -17, -29),
-      createPowerup("boost", 17, -29),
-      createPowerup("boost", -17, 29),
-      createPowerup("boost", 17, 29),
-      createPowerup("boost", -19, 0),
-      createPowerup("boost", 19, 0),
-      createPowerup("boost", -10, -15),
-      createPowerup("boost", 10, -15),
-      createPowerup("boost", -10, 15),
-      createPowerup("boost", 10, 15),
-      createPowerup("jump", -6, 0),
-      createPowerup("pulse", 6, 0),
+      createPowerup("boost", -34, -58),
+      createPowerup("boost", 34, -58),
+      createPowerup("boost", -34, 58),
+      createPowerup("boost", 34, 58),
+      createPowerup("boost", -38, 0),
+      createPowerup("boost", 38, 0),
+      createPowerup("boost", -20, -30),
+      createPowerup("boost", 20, -30),
+      createPowerup("boost", -20, 30),
+      createPowerup("boost", 20, 30),
+      createPowerup("jump", -12, 0),
+      createPowerup("pulse", 12, 0),
     ],
   };
 }
@@ -347,7 +388,7 @@ function updatePlayer(player, dt) {
   }
 
   if (jumpPressed && player.grounded && player.jumps > 0) {
-    player.velocity.y = 10.4;
+    player.velocity.y = JUMP_VELOCITY;
     player.grounded = false;
     player.jumps -= 1;
     player.airTime = 0;
@@ -431,21 +472,44 @@ function updateBall(ball, dt) {
 function resolvePlayerBall(player, ball, force) {
   const dx = ball.position.x - player.position.x;
   const dz = ball.position.z - player.position.z;
-  const minDistance = player.radius + ball.radius;
-  const distance = Math.hypot(dx, dz);
+  const right = { x: Math.cos(player.yaw), z: -Math.sin(player.yaw) };
+  const forward = { x: Math.sin(player.yaw), z: Math.cos(player.yaw) };
+  const localX = dx * right.x + dz * right.z;
+  const localZ = dx * forward.x + dz * forward.z;
+  const halfWidth = 1.08;
+  const halfLength = 2.12;
+  const closestX = THREE.MathUtils.clamp(localX, -halfWidth, halfWidth);
+  const closestZ = THREE.MathUtils.clamp(localZ, -halfLength, halfLength);
+  let normalX = localX - closestX;
+  let normalZ = localZ - closestZ;
+  let distance = Math.hypot(normalX, normalZ);
 
-  if (distance <= 0 || distance > minDistance) return;
+  if (distance > ball.radius) return;
 
-  const nx = dx / distance;
-  const nz = dz / distance;
-  const overlap = minDistance - distance;
-  ball.position.x += nx * overlap;
-  ball.position.z += nz * overlap;
+  if (distance < 0.0001) {
+    const xPenetration = halfWidth - Math.abs(localX);
+    const zPenetration = halfLength - Math.abs(localZ);
+    if (xPenetration < zPenetration) {
+      normalX = Math.sign(localX || 1);
+      normalZ = 0;
+    } else {
+      normalX = 0;
+      normalZ = Math.sign(localZ || 1);
+    }
+    distance = 1;
+  }
+
+  const nx = (right.x * normalX + forward.x * normalZ) / distance;
+  const nz = (right.z * normalX + forward.z * normalZ) / distance;
+  const overlap = ball.radius - Math.min(distance, ball.radius);
+  ball.position.x += nx * (overlap + 0.04);
+  ball.position.z += nz * (overlap + 0.04);
 
   const playerSpeed = Math.hypot(player.velocity.x, player.velocity.z);
-  ball.velocity.x += nx * (10.5 + playerSpeed * 0.62) * force + player.velocity.x * 0.42;
-  ball.velocity.z += nz * (10.5 + playerSpeed * 0.62) * force + player.velocity.z * 0.42;
-  ball.velocity.y = Math.max(ball.velocity.y, Math.abs(player.velocity.y) * 0.2 + 2.2);
+  const flipBonus = player.flipTimer > 0 ? 1.45 : 1;
+  ball.velocity.x += nx * (13 + playerSpeed * 0.72) * force * flipBonus + player.velocity.x * 0.48;
+  ball.velocity.z += nz * (13 + playerSpeed * 0.72) * force * flipBonus + player.velocity.z * 0.48;
+  ball.velocity.y = Math.max(ball.velocity.y, Math.abs(player.velocity.y) * 0.25 + 3.1);
 }
 
 function resolvePlayerBump(a, b) {
@@ -518,8 +582,8 @@ function checkGoals(state) {
 }
 
 function resetKickoff(state) {
-  state.players.host.position = { x: 0, y: 0.55, z: 25 };
-  state.players.guest.position = { x: 0, y: 0.55, z: -25 };
+  state.players.host.position = { x: 0, y: 0.55, z: PLAYER_START_Z };
+  state.players.guest.position = { x: 0, y: 0.55, z: -PLAYER_START_Z };
   state.players.host.velocity = { x: 0, y: 0, z: 0 };
   state.players.guest.velocity = { x: 0, y: 0, z: 0 };
   state.players.host.yaw = Math.PI;
@@ -530,7 +594,7 @@ function resetKickoff(state) {
   state.players.guest.jumpWasDown = false;
   state.players.host.flipTimer = 0;
   state.players.guest.flipTimer = 0;
-  state.ball.position = { x: 0, y: 1.15, z: 0 };
+  state.ball.position = { x: 0, y: state.ball.radius, z: 0 };
   state.ball.velocity = { x: (Math.random() - 0.5) * 4, y: 0, z: (Math.random() - 0.5) * 4 };
 }
 
@@ -568,10 +632,10 @@ function createWorld() {
   sun.position.set(-24, 42, 28);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -62;
-  sun.shadow.camera.right = 62;
-  sun.shadow.camera.top = 62;
-  sun.shadow.camera.bottom = -62;
+  sun.shadow.camera.left = -120;
+  sun.shadow.camera.right = 120;
+  sun.shadow.camera.top = 120;
+  sun.shadow.camera.bottom = -120;
   scene.add(sun);
 
   const field = new THREE.Mesh(
@@ -622,9 +686,16 @@ function createTrailMeshes(group) {
     opacity: 0,
     depthWrite: false,
   });
+  const airMaterial = new THREE.MeshBasicMaterial({
+    color: 0xbff7ff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
   const trails = {
-    dirt: createTrailPool(group, 72, new THREE.BoxGeometry(0.34, 0.035, 0.78), dirtMaterial),
-    boost: createTrailPool(group, 56, new THREE.ConeGeometry(0.22, 1.25, 6), boostMaterial),
+    dirt: createTrailPool(group, 88, new THREE.BoxGeometry(0.56, 0.05, 1.34), dirtMaterial),
+    boost: createTrailPool(group, 72, new THREE.ConeGeometry(0.38, 2.25, 6), boostMaterial),
+    air: createTrailPool(group, 72, new THREE.TorusGeometry(0.48, 0.055, 6, 18), airMaterial),
   };
   return trails;
 }
@@ -844,6 +915,7 @@ function addStadiumDetails(group) {
 
 function createCar(color) {
   const car = new THREE.Group();
+  car.userData.wheels = [];
   const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.18 });
   const trimMaterial = new THREE.MeshStandardMaterial({ color: 0xf3fbff, roughness: 0.3, metalness: 0.2 });
   const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x081929, roughness: 0.2, metalness: 0.42 });
@@ -902,29 +974,64 @@ function createCar(color) {
   headlights.position.set(0, 0.48, 2.06);
   car.add(headlights);
 
-  const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x07111f, roughness: 0.7 });
   [-1, 1].forEach((x) => {
     [-1, 1].forEach((z) => {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.3, 10), wheelMaterial);
-      wheel.castShadow = true;
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(x * 1.02, 0.08, z * 1.28);
+      const wheel = createWheel(trimMaterial);
+      wheel.position.set(x * 1.04, 0.1, z * 1.3);
       car.add(wheel);
-
-      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.32, 8), trimMaterial);
-      hub.rotation.z = Math.PI / 2;
-      hub.position.copy(wheel.position);
-      car.add(hub);
+      car.userData.wheels.push(wheel);
     });
   });
 
   return car;
 }
 
+function createWheel(trimMaterial) {
+  const wheel = new THREE.Group();
+  const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x050b13, roughness: 0.82, metalness: 0.08 });
+  const treadMaterial = new THREE.MeshStandardMaterial({ color: 0x111f2f, roughness: 0.72, metalness: 0.12 });
+  const hubMaterial = trimMaterial.clone();
+  hubMaterial.color.setHex(0xc7eaff);
+  hubMaterial.emissive.setHex(0x12394c);
+  hubMaterial.emissiveIntensity = 0.2;
+
+  const tire = new THREE.Mesh(new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.42, 20), tireMaterial);
+  tire.castShadow = true;
+  tire.rotation.z = Math.PI / 2;
+  wheel.add(tire);
+
+  const outerRim = new THREE.Mesh(new THREE.TorusGeometry(WHEEL_RADIUS * 0.72, 0.045, 8, 28), hubMaterial);
+  outerRim.rotation.y = Math.PI / 2;
+  wheel.add(outerRim);
+
+  const innerHub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.46, 14), hubMaterial);
+  innerHub.castShadow = true;
+  innerHub.rotation.z = Math.PI / 2;
+  wheel.add(innerHub);
+
+  for (let i = 0; i < 6; i += 1) {
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.08, WHEEL_RADIUS * 0.78), hubMaterial);
+    spoke.castShadow = true;
+    spoke.rotation.x = (i / 6) * Math.PI * 2;
+    spoke.position.x = 0.24;
+    wheel.add(spoke);
+  }
+
+  for (let i = 0; i < 10; i += 1) {
+    const tread = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.055, 0.11), treadMaterial);
+    tread.castShadow = true;
+    tread.position.set(0, Math.cos((i / 10) * Math.PI * 2) * WHEEL_RADIUS, Math.sin((i / 10) * Math.PI * 2) * WHEEL_RADIUS);
+    tread.rotation.x = (i / 10) * Math.PI * 2;
+    wheel.add(tread);
+  }
+
+  return wheel;
+}
+
 function createBall() {
   const ball = new THREE.Group();
   const core = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(1.04, 2),
+    new THREE.IcosahedronGeometry(1.16, 2),
     new THREE.MeshStandardMaterial({
       color: 0xe8f7ff,
       roughness: 0.26,
@@ -957,20 +1064,20 @@ function createBall() {
   });
 
   createSpherePanels(34).forEach((normal, index) => {
-    const panel = new THREE.Mesh(new THREE.CircleGeometry(index % 5 === 0 ? 0.34 : 0.3, 6), hexMaterial);
-    orientPanelOnBall(panel, normal, 1.115, index * 0.37);
+    const panel = new THREE.Mesh(new THREE.CircleGeometry(index % 5 === 0 ? 0.39 : 0.34, 6), hexMaterial);
+    orientPanelOnBall(panel, normal, 1.27, index * 0.37);
     ball.add(panel);
   });
 
   createSpherePanels(18, 0.55).forEach((normal, index) => {
-    const triangle = new THREE.Mesh(new THREE.CircleGeometry(0.24, 3), triangleMaterial);
-    orientPanelOnBall(triangle, normal, 1.135, index * 0.71);
+    const triangle = new THREE.Mesh(new THREE.CircleGeometry(0.29, 3), triangleMaterial);
+    orientPanelOnBall(triangle, normal, 1.3, index * 0.71);
     ball.add(triangle);
   });
 
   createSpherePanels(24, 0.22).forEach((normal, index) => {
-    const rivet = new THREE.Mesh(new THREE.CircleGeometry(0.075, 6), seamMaterial);
-    orientPanelOnBall(rivet, normal, 1.145, index * 0.21);
+    const rivet = new THREE.Mesh(new THREE.CircleGeometry(0.09, 6), seamMaterial);
+    orientPanelOnBall(rivet, normal, 1.315, index * 0.21);
     ball.add(rivet);
   });
 
@@ -1019,7 +1126,7 @@ function createPowerupMesh(type) {
   return group;
 }
 
-function updateMeshes(state) {
+function updateMeshes(state, dt) {
   PLAYER_IDS.forEach((id) => {
     const player = state.players[id];
     const mesh = objects.players[id];
@@ -1030,6 +1137,7 @@ function updateMeshes(state) {
     const pitch = player.flipPitch * flipSpin;
     const roll = player.flipRoll * flipSpin + player.velocity.y * -0.015;
     mesh.rotation.set(pitch, player.yaw, roll);
+    updateWheelSpin(mesh, player, dt);
     spawnCarTrails(player, id);
   });
 
@@ -1051,8 +1159,17 @@ function updateMeshes(state) {
     net.glow.material.opacity = 0.06 + pulse * 0.08;
   });
 
-  updateTrailPool(objects.trails.dirt, 0.024, 1.012);
-  updateTrailPool(objects.trails.boost, 0.034, 1.018);
+  updateTrailPool(objects.trails.dirt, 0.019, 1.014);
+  updateTrailPool(objects.trails.boost, 0.027, 1.026);
+  updateTrailPool(objects.trails.air, 0.026, 1.032);
+}
+
+function updateWheelSpin(carMesh, player, dt) {
+  const forwardSpeed = player.velocity.x * Math.sin(player.yaw) + player.velocity.z * Math.cos(player.yaw);
+  const spinDelta = (forwardSpeed / WHEEL_RADIUS) * dt;
+  carMesh.userData.wheels?.forEach((wheel) => {
+    wheel.rotation.x += spinDelta;
+  });
 }
 
 function spawnCarTrails(player, id) {
@@ -1069,8 +1186,8 @@ function spawnCarTrails(player, id) {
         trailState.dirtCursor,
         base.clone().add(offset),
         player.yaw + (Math.random() - 0.5) * 0.45,
-        0.62,
-        0.55 + Math.random() * 0.2,
+        0.84,
+        0.95 + Math.random() * 0.22,
       );
       trailState.dirtCursor = (trailState.dirtCursor + 1) % objects.trails.dirt.length;
     });
@@ -1086,11 +1203,29 @@ function spawnCarTrails(player, id) {
         trailState.boostCursor,
         point,
         player.yaw + Math.PI,
-        0.38,
-        0.62 + Math.random() * 0.18,
+        0.52,
+        1.15 + Math.random() * 0.24,
         boostColor,
       );
       trailState.boostCursor = (trailState.boostCursor + 1) % objects.trails.boost.length;
+    });
+  }
+
+  if (!player.grounded && player.flipTimer > 0) {
+    const airColor = id === "host" ? 0xbff7ff : 0xffd6ad;
+    [-1, 0, 1].forEach((side) => {
+      const offset = carRight.clone().multiplyScalar(side * 0.65);
+      const lift = new THREE.Vector3(0, 0.22 + Math.random() * 0.42, 0);
+      spawnTrailParticle(
+        objects.trails.air,
+        trailState.airCursor,
+        base.clone().add(offset).add(lift),
+        player.yaw + Math.random() * 0.8,
+        0.48,
+        1.1 + Math.random() * 0.35,
+        airColor,
+      );
+      trailState.airCursor = (trailState.airCursor + 1) % objects.trails.air.length;
     });
   }
 }

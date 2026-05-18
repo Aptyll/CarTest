@@ -11,6 +11,8 @@ A tiny vanilla JavaScript three.js prototype with PeerJS multiplayer, host-owned
 
 PeerJS handles the WebRTC connection between browsers. The page URL only gets both players to the same game page; the lobby code connects the guest to the host.
 
+If joining hangs, keep the host tab open and double-check the lobby code. Some school, office, VPN, or strict home networks block direct WebRTC peer connections; those networks need a TURN relay service for fully reliable multiplayer.
+
 ## Controls
 
 - `W` / `S`: Drive forward / reverse
