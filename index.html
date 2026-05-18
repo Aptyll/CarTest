@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lowpoly Rocket League 1v1</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <section id="menu" class="panel">
+        <p class="eyebrow">Peer.js local-hosted prototype</p>
+        <h1>Lowpoly Rocket League 1v1</h1>
+        <p>
+          Host with Live Server, share the page URL and your peer room ID with a
+          friend on the same network, then play peer-to-peer.
+        </p>
+
+        <div class="actions">
+          <button id="hostButton">Host Game</button>
+          <div class="join-row">
+            <input id="roomInput" placeholder="Host peer ID" autocomplete="off" />
+            <button id="joinButton">Join Game</button>
+          </div>
+        </div>
+
+        <div id="roomCard" class="room-card hidden">
+          <span>Your room ID</span>
+          <strong id="roomId">...</strong>
+        </div>
+
+        <div class="controls">
+          <strong>Controls</strong>
+          <span>W/S drive</span>
+          <span>A/D steer</span>
+          <span>Space jump</span>
+          <span>Shift boost</span>
+        </div>
+      </section>
+
+      <section id="hud" class="hidden">
+        <div id="status">Choose Host or Join</div>
+        <div id="score">0 - 0</div>
+        <div id="boostMeter"><span></span></div>
+      </section>
+
+      <canvas id="gameCanvas"></canvas>
+    </main>
+
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

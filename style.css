@@ -1,0 +1,235 @@
+:root {
+  color-scheme: dark;
+  --bg: #07111f;
+  --panel: rgba(12, 23, 40, 0.82);
+  --panel-strong: rgba(18, 35, 60, 0.94);
+  --text: #edf6ff;
+  --muted: #97aac2;
+  --blue: #50c8ff;
+  --orange: #ff9d42;
+  --green: #8dff9f;
+  --danger: #ff6680;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at top, #16345c 0%, var(--bg) 58%);
+  color: var(--text);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+button,
+input {
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  padding: 0.85rem 1.2rem;
+  background: linear-gradient(135deg, var(--blue), #7c6dff);
+  color: #03101c;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  box-shadow: 0 12px 36px rgba(80, 200, 255, 0.24);
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+input {
+  min-width: 0;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  outline: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+input:focus {
+  outline-color: var(--blue);
+}
+
+#gameCanvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.panel {
+  position: fixed;
+  z-index: 5;
+  left: clamp(1rem, 4vw, 4rem);
+  top: 50%;
+  width: min(92vw, 520px);
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 28px;
+  background: var(--panel);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+  transform: translateY(-50%);
+}
+
+.panel h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 7vw, 5rem);
+  line-height: 0.92;
+  letter-spacing: -0.07em;
+}
+
+.panel p {
+  max-width: 42rem;
+  margin: 1rem 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem !important;
+  color: var(--green) !important;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.actions {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.35rem;
+}
+
+.join-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+
+.room-card {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.room-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.room-card strong {
+  user-select: all;
+  color: var(--green);
+  font-size: 1.3rem;
+  word-break: break-all;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  color: var(--muted);
+}
+
+.controls strong,
+.controls span {
+  padding: 0.45rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.82rem;
+}
+
+#hud {
+  position: fixed;
+  z-index: 4;
+  inset: 1rem 1rem auto;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  pointer-events: none;
+}
+
+#status,
+#score {
+  width: max-content;
+  max-width: min(42vw, 460px);
+  padding: 0.7rem 0.95rem;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-weight: 750;
+  backdrop-filter: blur(14px);
+}
+
+#score {
+  justify-self: center;
+  color: var(--text);
+  font-size: clamp(1.25rem, 4vw, 2.4rem);
+  letter-spacing: 0.12em;
+}
+
+#boostMeter {
+  justify-self: end;
+  width: min(32vw, 220px);
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+#boostMeter span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--orange), #ffd35b);
+  transition: width 120ms linear;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 700px) {
+  .panel {
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  .join-row {
+    grid-template-columns: 1fr;
+  }
+
+  #hud {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  #score,
+  #boostMeter {
+    justify-self: start;
+  }
+}
